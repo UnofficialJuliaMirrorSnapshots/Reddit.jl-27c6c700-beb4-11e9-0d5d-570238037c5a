@@ -7,8 +7,12 @@ export AuthorizedCredentials,
        about,
        authorize,
        blocked,
+       comment,
        comments,
        credentials,
+       default,
+       default!,
+       delete,
        downvoted,
        friends,
        gilded,
@@ -18,6 +22,7 @@ export AuthorizedCredentials,
        overview,
        preferences,
        saved,
+       searchusers,
        submitted,
        subscribers,
        token,
@@ -30,13 +35,19 @@ using JSON
 using Revise
 import Base64.Base64EncodePipe
 
-const REDDIT_URL = "https://www.reddit.com"
-const SHORT_URL = "https://redd.it"
-const OATH_URL = "https://oauth.reddit.com"
-const CONFIG = "config/config.ini"
+"""
+    abstract type AbstractCredentials
 
+Abstract representation of credentials.
+"""
 abstract type AbstractCredentials end
 
+
+"""
+    struct Credentials
+
+Represents account information for a Reddit script application.
+"""
 struct Credentials <: AbstractCredentials
     id::String
     secret::String
@@ -45,6 +56,13 @@ struct Credentials <: AbstractCredentials
     password::String
 end
 
+
+"""
+    struct AuthorizedCredentials
+
+Represents a credentials that has been authorized and recieved an
+access token.
+"""
 struct AuthorizedCredentials <: AbstractCredentials
     id::String
     secret::String
@@ -54,12 +72,47 @@ struct AuthorizedCredentials <: AbstractCredentials
     token::String
 end
 
+"""
+    struct Session
+
+Represents an authorized session with Reddit's API.
+"""
+mutable struct Session
+    creds::Union{AuthorizedCredentials, Array{AuthorizedCredentials}}
+    Session() = new()
+end
+
+"""
+    struct Subreddit
+
+Represents a subreddit on Reddit.
+"""
 struct Subreddit
     name::String
 end
 
+"""
+    struct User
+
+Represents a user on Reddit.
+"""
 struct User
     name::String
+end
+
+const REDDIT_URL = "https://www.reddit.com"
+const SHORT_URL = "https://redd.it"
+const OATH_URL = "https://oauth.reddit.com"
+const CONFIG = "config/config.ini"
+const DEFAULT_SESSION = Session()
+
+"""
+    about()
+
+Get information about default user(s).
+"""
+function about()
+    about(default())
 end
 
 """
@@ -68,7 +121,16 @@ end
 Get information about the current user.
 """
 function about(ac::AuthorizedCredentials)
-    JSON.parse(get("/user/$(ac.username)/about", ac))
+    JSON.parse(get("/user/$(ac.username)/about", ac))["data"]
+end
+
+"""
+    about(user::User)
+
+Get information about a specified user using default credentials.
+"""
+function about(user::User)
+    about(user, default())
 end
 
 """
@@ -77,7 +139,16 @@ end
 Get information about a specified user.
 """
 function about(user::User, ac::AuthorizedCredentials)
-    JSON.parse(get("/user/$(user.name)/about", ac))
+    JSON.parse(get("/user/$(user.name)/about", ac))["data"]
+end
+
+"""
+    about(sub::Subreddit)
+
+Get information about a specified subreddit using default credentials.
+"""
+function about(sub::Subreddit)
+    about(sub, default())
 end
 
 """
@@ -86,7 +157,7 @@ end
 Get information about a specified subreddit.
 """
 function about(sub::Subreddit, ac::AuthorizedCredentials)
-    JSON.parse(get("/r/$(sub.name)/about", ac))
+    JSON.parse(get("/r/$(sub.name)/about", ac))["data"]
 end
 
 """
@@ -100,7 +171,11 @@ function authorize(c::Credentials)
 end
 
 """
-authorize(id::String, secret::String, useragent::String, username::String, password::String)
+    authorize(id::AbstractString,
+              secret::AbstractString,
+              useragent::AbstractString,
+              username::AbstractString,
+              password::AbstractString)
 
 Use reddit application account information to request an acess token and
 return AuthorizedCredentials.
@@ -115,12 +190,53 @@ function authorize(id::AbstractString,
 end
 
 """
+    blocked()
+
+Get users blocked by default user(s).
+"""
+function blocked()
+    blocked(default())
+end
+
+"""
     blocked(ac::AuthorizedCredentials)
 
-Get users blocked by current user.
+Get an Array of users blocked by current user.
 """
 function blocked(ac::AuthorizedCredentials)
-    JSON.parse(get("/prefs/blocked", ac))
+    JSON.parse(get("/prefs/blocked", ac))["data"]["children"]
+end
+
+"""
+    comment(parent::AbstractString, text::AbstractString)
+
+Make a new comment as default user(s).
+"""
+function comment(parent::AbstractString, text::AbstractString)
+    comment(parent, text, default())
+end
+
+"""
+    comment(parent::AbstractString,
+            text::AbstractString,
+            ac::AuthorizedCredentials)
+
+Make a new comment.
+"""
+function comment(parent::AbstractString,
+                 text::AbstractString,
+                 ac::AuthorizedCredentials)
+    body = "api_type=json&text=$(text)&thing_id=$(parent)"
+    JSON.parse(post("/api/comment", body, ac))
+end
+
+"""
+    comments()
+
+Get all comments by default user(s).
+"""
+function comments()
+    comments(default())
 end
 
 """
@@ -129,7 +245,25 @@ end
 Get all comments by current user.
 """
 function comments(ac::AuthorizedCredentials)
-    JSON.parse(get("/user/$(ac.username)/comments", ac))
+    comments(ac.username, ac)
+end
+
+"""
+    comments(user::AbstractString)
+
+Get all comments by a user, using default credentials.
+"""
+function comments(user::AbstractString)
+    comments(user, default())
+end
+
+"""
+    comments(user::User)
+
+Get all comments by a user, using default credentials.
+"""
+function comments(user::User)
+    comments(user.name, default())
 end
 
 """
@@ -138,7 +272,16 @@ end
 Get all comments by a user.
 """
 function comments(user::User, ac::AuthorizedCredentials)
-    JSON.parse(get("/user/$(user.name)/comments", ac))
+    comments(user.name, ac)
+end
+
+"""
+    comments(user::AbstractString, ac::AuthorizedCredentials)
+
+Get all comments by a user.
+"""
+function comments(user::AbstractString, ac::AuthorizedCredentials)
+    JSON.parse(get("/user/$(user)/comments", ac))["data"]["children"]
 end
 
 """
@@ -167,6 +310,61 @@ function credentials(name::AbstractString, config::AbstractString)
 end
 
 """
+    default()
+
+Get the default credentials.
+"""
+function default()
+    if isdefined(DEFAULT_SESSION, :creds)
+        DEFAULT_SESSION.creds
+    else
+        println(
+        """
+        Error: Default credentials not set.
+        Use default!(creds::Union{AuthorizedCredentials, Array{AuthorizedCredentials}})
+        to set default credentials.
+        """)
+    end
+end
+
+"""
+    default!(creds::Union{AuthorizedCredentials, Array{AuthorizedCredentials}})
+
+Set the default credentials.
+"""
+function default!(creds::Union{AuthorizedCredentials, Array{AuthorizedCredentials}})
+    DEFAULT_SESSION.creds = creds
+end
+
+"""
+    delete(id::AbstractString)
+
+Make a new comment as default user(s).
+"""
+function delete(id::AbstractString)
+    comment(id, default())
+end
+
+"""
+    delete(id::AbstractString, ac::AuthorizedCredentials)
+
+Make a new comment.
+"""
+function delete(id::AbstractString, ac::AuthorizedCredentials)
+    body = "id=$(id)"
+    JSON.parse(post("/api/del", body, ac))
+end
+
+"""
+    downvoted()
+
+Get all threads downvoted by default user(s).
+"""
+function downvoted()
+    downvoted(default())
+end
+
+"""
     downvoted(ac::AuthorizedCredentials)
 
 Get all threads a user has downvoted.
@@ -191,12 +389,21 @@ function encode(s::AbstractString)
 end
 
 """
+    friends()
+
+Get friends of default user(s).
+"""
+function friends()
+    friends(default())
+end
+
+"""
     friends(ac::AuthorizedCredentials)
 
 Get friends of current user.
 """
 function friends(ac::AuthorizedCredentials)
-    JSON.parse(get("/api/v1/me/friends", ac))
+    JSON.parse(get("/api/v1/me/friends", ac))["data"]["children"]
 end
 
 """
@@ -212,21 +419,66 @@ function get(api::AbstractString, ac::AuthorizedCredentials)
 end
 
 """
+    gilded()
+
+Get all threads gilded by default user(s).
+"""
+function gilded()
+    gilded(default())
+end
+
+"""
     gilded(ac::AuthorizedCredentials)
 
 Get all threads current user has gilded.
 """
 function gilded(ac::AuthorizedCredentials)
-    JSON.parse(get("/user/$(ac.username)/gilded", ac))
+    gilded(ac.username, ac)
+end
+
+"""
+    gilded(user::User)
+
+Get all threads a user has gilded, using default credentials.
+"""
+function gilded(user::User)
+    gilded(user.name, default())
+end
+
+"""
+    gilded(user::AbstractString)
+
+Get all threads a user has gilded, using default credentials.
+"""
+function gilded(user::AbstractString)
+    gilded(user, default())
 end
 
 """
     gilded(user::User, ac::AuthorizedCredentials)
 
-Get all threads a user has gilded.
+Get all threads a user has gilded, using default credentials.
 """
 function gilded(user::User, ac::AuthorizedCredentials)
-    JSON.parse(get("/user/$(user.name)/gilded", ac))
+    gilded(user.name, ac)
+end
+
+"""
+    gilded(user::AbstractString, ac::AuthorizedCredentials)
+
+Get all threads a user has gilded.
+"""
+function gilded(user::AbstractString, ac::AuthorizedCredentials)
+    JSON.parse(get("/user/$(user)/gilded", ac))["data"]["children"]
+end
+
+"""
+    hidden()
+
+Get all threads hidden by default user(s).
+"""
+function hidden()
+    hidden(default())
 end
 
 """
@@ -235,7 +487,16 @@ end
 Get all threads current user has hidden.
 """
 function hidden(ac::AuthorizedCredentials)
-    JSON.parse(get("/user/$(ac.username)/hidden", ac))
+    JSON.parse(get("/user/$(ac.username)/hidden", ac))["data"]["children"]
+end
+
+"""
+    karma()
+
+Get karma breakdown for default user(s).
+"""
+function karma()
+    karma(default())
 end
 
 """
@@ -244,7 +505,16 @@ end
 Get karma breakdown for current user.
 """
 function karma(ac::AuthorizedCredentials)
-    JSON.parse(get("/api/v1/me/karma", ac))
+    JSON.parse(get("/api/v1/me/karma", ac))["data"]
+end
+
+"""
+    me()
+
+Get identity information for default user(s).
+"""
+function me()
+    me(default())
 end
 
 """
@@ -257,12 +527,39 @@ function me(ac::AuthorizedCredentials)
 end
 
 """
+    overview()
+
+Get an overview for default user(s).
+"""
+function overview()
+    overview(default())
+end
+
+"""
     overview(ac::AuthorizedCredentials)
 
 Get an overview for current user.
 """
 function overview(ac::AuthorizedCredentials)
-    JSON.parse(get("/user/$(ac.username)/overview", ac))
+    overview(ac.username, ac)
+end
+
+"""
+    overview(user::User)
+
+Get an overview for a user, using default credentials.
+"""
+function overview(user::User)
+    overview(user.name, default())
+end
+
+"""
+    overview(user::AbstractString)
+
+Get an overview for a user, using default credentials.
+"""
+function overview(user::AbstractString)
+    overview(user, default())
 end
 
 """
@@ -271,7 +568,59 @@ end
 Get an overview for a user.
 """
 function overview(user::User, ac::AuthorizedCredentials)
-    JSON.parse(get("/user/$(user.name)/overview", ac))
+    overview(user.name, ac)
+end
+
+"""
+    overview(user::AbstractString, ac::AuthorizedCredentials)
+
+Get an overview for a user.
+"""
+function overview(user::AbstractString, ac::AuthorizedCredentials)
+    JSON.parse(get("/user/$(user)/overview", ac))["data"]["children"]
+end
+
+"""
+    post(api::AbstractString,
+         data::AbstractString)
+
+Send POST request to API, using default credentials.
+"""
+function post(api::AbstractString,
+              body::AbstractString)
+    post(api, body, default())
+end
+
+"""
+    post(api::AbstractString,
+         data::AbstractString,
+         ac::AbstractCredentials)
+
+Send POST request to API.
+"""
+function post(api::AbstractString,
+              body::AbstractString,
+              ac::AbstractCredentials)
+      try
+          String(HTTP.request(
+                "POST", OATH_URL*api,
+                ["Authorization" => "bearer "*ac.token,
+                "User-Agent" => ac.useragent],
+                body).body)
+      catch err
+          if isa(err, HTTP.ExceptionRequest.StatusError)
+              String(err.response.body)
+          end
+      end
+end
+
+"""
+    preferences()
+
+Get all preferences for default user(s).
+"""
+function preferences()
+    preferences(default())
 end
 
 """
@@ -284,12 +633,49 @@ function preferences(ac::AuthorizedCredentials)
 end
 
 """
+    saved()
+
+Get all posts saved by default user(s).
+"""
+function saved()
+    saved(default())
+end
+
+"""
     saved(ac::AuthorizedCredentials)
 
 Get all posts a user has saved.
 """
 function saved(ac::AuthorizedCredentials)
-    JSON.parse(get("/user/$(ac.username)/saved", ac))
+    JSON.parse(get("/user/$(ac.username)/saved", ac))["data"]["children"]
+end
+
+"""
+    searchusers(name::AbstractString)
+
+Search for all users with usernames matching input string, using credentials set
+as default.
+"""
+function searchusers(name::AbstractString)
+    searchusers(name, default())
+end
+
+"""
+    searchusers(name::AbstractString, ac::AuthorizedCredentials)
+
+Search for all users with usernames matching input string.
+"""
+function searchusers(name::AbstractString, ac::AuthorizedCredentials)
+    JSON.parse(post("/api/search_reddit_names", "query=$(name)", ac))["names"]
+end
+
+"""
+    submitted()
+
+Get all posts current submitted by default user(s).
+"""
+function submitted()
+    submitted(default())
 end
 
 """
@@ -298,7 +684,25 @@ end
 Get all posts current user has submitted.
 """
 function submitted(ac::AuthorizedCredentials)
-    JSON.parse(get("/user/$(ac.username)/submitted", ac))
+    submitted(User(ac.username), ac)
+end
+
+"""
+    submitted(user::AbstractString)
+
+Get all posts a user has submitted, using default credentials.
+"""
+function submitted(user::AbstractString)
+    submitted(User(user), default())
+end
+
+"""
+    submitted(user::User)
+
+Get all posts a user has submitted, using default credentials.
+"""
+function submitted(user::User)
+    submitted(user, default())
 end
 
 """
@@ -307,16 +711,25 @@ end
 Get all posts a user has submitted.
 """
 function submitted(user::User, ac::AuthorizedCredentials)
-    JSON.parse(get("/user/$(user.name)/submitted", ac))
+    JSON.parse(get("/user/$(user.name)/submitted", ac))["data"]["children"]
 end
 
 """
-    subscribers(sub::AbstractString, ac::AuthorizedCredentials)
+    subscribers(sub::AbstractString)
 
-Get total number of subscribers for a subreddit by name.
+Get total number of subscribers for a subreddit by name, using default credentials.
 """
-function subscribers(sub::AbstractString, ac::AuthorizedCredentials)
-    about(Subreddit(sub), ac)["data"]["subscribers"]
+function subscribers(sub::AbstractString)
+    subscribers(sub, default())
+end
+
+"""
+    subscribers(sub::Subreddit)
+
+Get total number of subscribers for a subreddit with Subreddit type.
+"""
+function subscribers(sub::Subreddit)
+    subscribers(sub.name, default())
 end
 
 """
@@ -325,7 +738,16 @@ end
 Get total number of subscribers for a subreddit with Subreddit type.
 """
 function subscribers(sub::Subreddit, ac::AuthorizedCredentials)
-    about(sub, ac)["data"]["subscribers"]
+    subscribers(sub.name, ac)
+end
+
+"""
+    subscribers(sub::AbstractString, ac::AuthorizedCredentials)
+
+Get total number of subscribers for a subreddit by name.
+"""
+function subscribers(sub::AbstractString, ac::AuthorizedCredentials)
+    about(Subreddit(sub), ac)["subscribers"]
 end
 
 """
@@ -358,12 +780,30 @@ function token(id::AbstractString,
 end
 
 """
+    trophies()
+
+Get all trophies for default user(s).
+"""
+function trophies()
+    trophies(default())
+end
+
+"""
     trophies(ac::AuthorizedCredentials)
 
 Get all trophies for current user.
 """
 function trophies(ac::AuthorizedCredentials)
-    JSON.parse(get("/api/v1/me/trophies", ac))
+    JSON.parse(get("/api/v1/me/trophies", ac))["data"]["trophies"]
+end
+
+"""
+    upvoted()
+
+Get all posts upvoted by default user(s).
+"""
+function upvoted()
+    upvoted(default())
 end
 
 """
@@ -372,7 +812,7 @@ end
 Get all posts a user has upvoted.
 """
 function upvoted(ac::AuthorizedCredentials)
-    JSON.parse(get("/user/$(ac.username)/upvoted", ac))
+    JSON.parse(get("/user/$(ac.username)/upvoted", ac))["data"]["children"]
 end
 
 end # module
